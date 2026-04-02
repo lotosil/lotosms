@@ -1,0 +1,17 @@
+﻿{
+  "name": "lotosms",
+  "build": {
+    "commands": [
+      "npm ci"
+    ]
+  },
+  "start": {
+    "command": "npm start",
+    "port": 3000
+  },
+  "environments": {
+    "production": {
+      "NODE_VERSION": "22.22.2"
+    }
+  }
+}
