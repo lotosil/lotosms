@@ -1,83 +1,69 @@
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
+const path = require("path");
+
+const db = require("./models");
+const authRouter = require("./routes/auth");
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-let messages = [];
-let users = {};
-let messageId = 0;
+// API для регистрации/логина
+app.use("/auth", authRouter);
 
+let users = {};
+
+// Socket.io
 io.on("connection", (socket) => {
     console.log("User connected");
 
-    socket.emit("load messages", messages);
+    socket.on("join", async (username) => {
+        const user = await db.User.findOne({ where: { username } });
+        if (!user) return;
 
-    // вход
-    socket.on("join", (username) => {
         users[socket.id] = username;
+
+        // Отправляем последние 50 сообщений
+        const messages = await db.Message.findAll({
+            include: db.User,
+            order: [["createdAt", "ASC"]],
+            limit: 50
+        });
+        socket.emit("load messages", messages);
+
         io.emit("users", Object.values(users));
     });
 
-    // сообщение
-    socket.on("chat message", ({ user, text }) => {
-        const msg = {
-            id: messageId++,
-            user,
+    socket.on("chat message", async ({ user, text }) => {
+        const dbUser = await db.User.findOne({ where: { username: user } });
+        if (!dbUser) return;
+
+        const msg = await db.Message.create({
+            userId: dbUser.id,
             text,
-            time: new Date().toLocaleTimeString(),
-            delivered: [],
-            read: []
-        };
+            time: new Date().toLocaleTimeString()
+        });
 
-        messages.push(msg);
-        io.emit("chat message", msg);
+        io.emit("chat message", { ...msg.dataValues, User: dbUser });
     });
 
-    // фото
-    socket.on("image", ({ user, image }) => {
-        const msg = {
-            id: messageId++,
-            user,
+    socket.on("image", async ({ user, image }) => {
+        const dbUser = await db.User.findOne({ where: { username: user } });
+        if (!dbUser) return;
+
+        const msg = await db.Message.create({
+            userId: dbUser.id,
             image,
-            time: new Date().toLocaleTimeString(),
-            delivered: [],
-            read: []
-        };
+            time: new Date().toLocaleTimeString()
+        });
 
-        messages.push(msg);
-        io.emit("image", msg);
-    });
-
-    // доставлено
-    socket.on("delivered", ({ id, user }) => {
-        const msg = messages.find(m => m.id === id);
-        if (msg && !msg.delivered.includes(user)) {
-            msg.delivered.push(user);
-        }
-    });
-
-    // прочитано
-    socket.on("read", ({ id, user }) => {
-        const msg = messages.find(m => m.id === id);
-        if (msg && !msg.read.includes(user)) {
-            msg.read.push(user);
-        }
-
-        io.emit("message read", msg);
-    });
-
-    // печатает
-    socket.on("typing", (username) => {
-        socket.broadcast.emit("typing", username);
-    });
-
-    socket.on("stop typing", () => {
-        socket.broadcast.emit("stop typing");
+        io.emit("image", { ...msg.dataValues, User: dbUser });
     });
 
     socket.on("disconnect", () => {
@@ -88,6 +74,6 @@ io.on("connection", (socket) => {
 
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, () => {
-    console.log("Server running");
+db.sequelize.sync().then(() => {
+    server.listen(PORT, () => console.log("Server running on port " + PORT));
 });
